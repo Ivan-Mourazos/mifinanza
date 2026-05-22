@@ -1,110 +1,33 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { createClient } from '@/lib/supabase/client'
-import { User } from '@supabase/supabase-js'
-import { Navigation } from '@/components/Navigation'
-import { useRouter } from 'next/navigation'
 import { UserBadge } from '@/components/UserBadge'
-import { defaultCategories } from '@/lib/finance'
-import { Category } from '@/lib/types'
-
-const presetColors = [
-  '#00FF88',
-  '#FF2D55',
-  '#FF6B6B',
-  '#FFD93D',
-  '#00D9FF',
-  '#A855F7',
-  '#F97316',
-  '#3B82F6',
-]
+import { CategoryForm } from '@/components/CategoryForm'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { ErrorBanner } from '@/components/ErrorBanner'
+import { LoadingScreen } from '@/components/LoadingScreen'
+import { PageShell } from '@/components/PageShell'
+import { useFinanceCore } from '@/context/FinanceContext'
+import { useSupabase } from '@/components/SupabaseProvider'
+import { createClient } from '@/lib/supabase/client'
+import { deleteCategory, saveCategory } from '@/lib/finance-mutations'
+import { Category, TransactionType } from '@/lib/types'
 
 export default function CategoriesPage() {
-  const [user, setUser] = useState<User | null>(null)
-  const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
+  const { user } = useSupabase()
+  const { categories, coreLoading, coreError, refreshCore } = useFinanceCore()
+  const supabase = useMemo(() => createClient(), [])
+
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-
   const [name, setName] = useState('')
-  const [type, setType] = useState<'income' | 'expense'>('expense')
+  const [type, setType] = useState<TransactionType>('expense')
   const [colorCode, setColorCode] = useState('#FF2D55')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const router = useRouter()
-  const supabase = useMemo(() => createClient(), [])
-
-  const fetchData = useCallback(async () => {
-    setError(null)
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError) {
-      setError('No se pudo comprobar tu sesión.')
-      setLoading(false)
-      return
-    }
-
-    if (!user) {
-      setLoading(false)
-      router.replace('/auth')
-      return
-    }
-
-    setUser(user)
-
-    const res = await supabase
-      .from('categories')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('name')
-
-    if (res.error) {
-      setError('No se pudieron cargar las categorías.')
-      setLoading(false)
-      return
-    }
-
-    if (!res.data || res.data.length === 0) {
-      const { error } = await supabase.from('categories').insert(
-        defaultCategories.map((cat) => ({
-          user_id: user.id,
-          ...cat,
-        }))
-      )
-
-      if (error) {
-        setError('No se pudieron crear las categorías iniciales.')
-        setLoading(false)
-        return
-      }
-
-      const seededRes = await supabase
-        .from('categories')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('name')
-
-      if (seededRes.error) {
-        setError('No se pudieron cargar las categorías iniciales.')
-        setLoading(false)
-        return
-      }
-
-      setCategories(seededRes.data || [])
-      setLoading(false)
-      return
-    }
-
-    setCategories(res.data || [])
-    setLoading(false)
-  }, [router, supabase])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const resetForm = () => {
     setName('')
@@ -114,9 +37,10 @@ export default function CategoriesPage() {
     setShowForm(false)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
     const trimmedName = name.trim()
+
     if (!user || !trimmedName) {
       setError('Escribe un nombre para la categoría.')
       return
@@ -125,288 +49,203 @@ export default function CategoriesPage() {
     setSaving(true)
     setError(null)
 
-    const data = {
-      user_id: user.id,
+    const result = await saveCategory(supabase, {
+      id: editingId,
+      userId: user.id,
       name: trimmedName,
       type,
-      color_code: colorCode,
-    }
-
-    const result = editingId
-      ? await supabase.from('categories').update(data).eq('id', editingId)
-      : await supabase.from('categories').insert(data)
+      colorCode,
+    })
 
     if (result.error) {
-      setError('No se pudo guardar la categoría.')
+      setError(result.error)
       setSaving(false)
       return
     }
 
-    await fetchData()
+    await refreshCore()
     resetForm()
     setSaving(false)
   }
 
-  const handleEdit = (cat: Category) => {
-    setName(cat.name)
-    setType(cat.type)
-    setColorCode(cat.color_code)
-    setEditingId(cat.id)
+  const handleEdit = (category: Category) => {
+    setName(category.name)
+    setType(category.type)
+    setColorCode(category.color_code)
+    setEditingId(category.id)
     setShowForm(true)
   }
 
-  const handleDelete = async (id: string) => {
-    const confirmed = window.confirm('¿Quieres borrar esta categoría?')
-    if (!confirmed) return
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
 
-    const { error } = await supabase.from('categories').delete().eq('id', id)
-    if (error) {
-      setError('No se pudo borrar la categoría. Revisa si tiene movimientos asociados.')
+    setDeleting(true)
+    setError(null)
+
+    const { error: deleteError } = await deleteCategory(supabase, deleteTarget.id)
+    if (deleteError) {
+      setError(deleteError)
+      setDeleting(false)
       return
     }
 
-    await fetchData()
+    await refreshCore()
+    setDeleteTarget(null)
+    setDeleting(false)
   }
 
   const incomeCategories = useMemo(
-    () => categories.filter((c) => c.type === 'income'),
+    () => categories.filter((category) => category.type === 'income'),
     [categories]
   )
   const expenseCategories = useMemo(
-    () => categories.filter((c) => c.type === 'expense'),
+    () => categories.filter((category) => category.type === 'expense'),
     [categories]
   )
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
-        <div className="w-8 h-8 border-2 border-neonCyan border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-gray-500">Cargando categorías...</p>
-      </div>
-    )
+  if (coreLoading) {
+    return <LoadingScreen message="Cargando categorías..." />
   }
 
   return (
-    <div className="min-h-screen pb-20">
-      <div className="mx-auto max-w-lg p-4 space-y-4 md:max-w-3xl">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center py-6"
-        >
-          <h1 className="text-2xl font-bold text-white">Categorías</h1>
-        </motion.div>
+    <PageShell className="mx-auto max-w-lg space-y-4 p-4 md:max-w-3xl">
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="py-6 text-center"
+      >
+        <h1 className="text-2xl font-bold text-white">Categorías</h1>
+      </motion.div>
 
-        <UserBadge user={user} />
+      <UserBadge />
 
-        <AnimatePresence>
-          {showForm && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="glass rounded-2xl p-4 overflow-hidden"
-            >
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="flex gap-2 p-1 bg-white/5 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() => setType('expense')}
-                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-                      type === 'expense'
-                        ? 'bg-neonMagenta text-white'
-                        : 'text-gray-400'
-                    }`}
-                  >
-                    Gasto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setType('income')}
-                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-                      type === 'income'
-                        ? 'bg-neonGreen text-background'
-                        : 'text-gray-400'
-                    }`}
-                  >
-                    Ingreso
-                  </button>
-                </div>
-
-                <div>
-                  <label htmlFor="category-name" className="mb-2 block text-sm text-gray-300">
-                    Nombre
-                  </label>
-                  <input
-                    id="category-name"
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Nombre de categoría"
-                    className="w-full px-4 py-3 rounded-lg bg-surface border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-neonCyan/50"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-400 mb-2" id="category-color-label">
-                    Color
-                  </p>
-                  <div className="flex gap-2 flex-wrap">
-                    {presetColors.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => setColorCode(color)}
-                        aria-label={`Elegir color ${color}`}
-                        aria-pressed={colorCode === color}
-                        className={`w-10 h-10 rounded-full transition-all ${
-                          colorCode === color
-                            ? 'ring-2 ring-white ring-offset-2 ring-offset-background scale-110'
-                            : 'hover:scale-105'
-                        }`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="flex-1 py-3 rounded-lg bg-white/10 text-white font-medium"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="flex-1 py-3 rounded-lg bg-neonCyan text-background font-semibold shadow-cyan disabled:opacity-50"
-                  >
-                    {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Crear'}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {!showForm && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setShowForm(true)}
-            className="w-full py-4 rounded-2xl bg-neonCyan text-background font-semibold text-lg shadow-cyan"
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="glass overflow-hidden rounded-2xl p-4"
           >
-            + Nueva Categoría
-          </motion.button>
+            <CategoryForm
+              name={name}
+              type={type}
+              colorCode={colorCode}
+              saving={saving}
+              editing={Boolean(editingId)}
+              onNameChange={setName}
+              onTypeChange={setType}
+              onColorChange={setColorCode}
+              onCancel={resetForm}
+              onSubmit={handleSubmit}
+            />
+          </motion.div>
         )}
+      </AnimatePresence>
 
-        {error && (
-          <div className="rounded-2xl border border-neonMagenta/30 bg-neonMagenta/10 p-4 text-sm text-neonMagenta">
-            <p>{error}</p>
-            <button
-              type="button"
-              onClick={fetchData}
-              className="mt-3 rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+      {!showForm && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => setShowForm(true)}
+          className="w-full rounded-2xl bg-neonCyan py-4 text-lg font-semibold text-background shadow-cyan"
+        >
+          + Nueva Categoría
+        </motion.button>
+      )}
+
+      {(error || coreError) && (
+        <ErrorBanner message={error || coreError || ''} onRetry={() => refreshCore()} />
+      )}
+
+      <CategorySection
+        title="Ingresos"
+        items={incomeCategories}
+        onEdit={handleEdit}
+        onDelete={setDeleteTarget}
+        emptyText="Sin categorías. Crea una para clasificar ingresos."
+      />
+      <CategorySection
+        title="Gastos"
+        items={expenseCategories}
+        onEdit={handleEdit}
+        onDelete={setDeleteTarget}
+        emptyText="Sin categorías. Crea una para clasificar gastos."
+      />
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Borrar categoría"
+        description="Solo se puede borrar si no tiene movimientos asociados."
+        confirmLabel="Borrar"
+        loading={deleting}
+        destructive
+        onCancel={() => {
+          if (!deleting) setDeleteTarget(null)
+        }}
+        onConfirm={confirmDelete}
+      />
+    </PageShell>
+  )
+}
+
+function CategorySection({
+  title,
+  items,
+  onEdit,
+  onDelete,
+  emptyText,
+}: {
+  title: string
+  items: Category[]
+  onEdit: (category: Category) => void
+  onDelete: (category: Category) => void
+  emptyText: string
+}) {
+  return (
+    <div>
+      <h3 className="mb-2 text-sm text-gray-400">{title}</h3>
+      <div className="space-y-2">
+        {items.length === 0 ? (
+          <p className="text-sm text-gray-500">{emptyText}</p>
+        ) : (
+          items.map((category, index) => (
+            <motion.div
+              key={category.id}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.03 }}
+              className="glass flex items-center justify-between rounded-xl p-4"
             >
-              Reintentar
-            </button>
-          </div>
+              <div className="flex items-center gap-3">
+                <span
+                  className="h-4 w-4 rounded-full"
+                  style={{ backgroundColor: category.color_code }}
+                />
+                <span className="text-white">{category.name}</span>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => onEdit(category)}
+                  aria-label={`Editar categoría ${category.name}`}
+                  className="p-2 text-gray-500 hover:text-neonCyan"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(category)}
+                  aria-label={`Borrar categoría ${category.name}`}
+                  className="p-2 text-gray-500 hover:text-neonMagenta"
+                >
+                  ✕
+                </button>
+              </div>
+            </motion.div>
+          ))
         )}
-
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-gray-400 text-sm mb-2">Ingresos</h3>
-            <div className="space-y-2">
-              {incomeCategories.length === 0 ? (
-                <p className="text-gray-500 text-sm">Sin categorías. Crea una para clasificar ingresos.</p>
-              ) : (
-                incomeCategories.map((cat, i) => (
-                  <motion.div
-                    key={cat.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="glass rounded-xl p-4 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="w-4 h-4 rounded-full"
-                        style={{ backgroundColor: cat.color_code }}
-                      />
-                      <span className="text-white">{cat.name}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => handleEdit(cat)}
-                        aria-label={`Editar categoría ${cat.name}`}
-                        className="p-2 text-gray-500 hover:text-neonCyan"
-                      >
-                        ✎
-                      </button>
-                      <button
-                        onClick={() => handleDelete(cat.id)}
-                        aria-label={`Borrar categoría ${cat.name}`}
-                        className="p-2 text-gray-500 hover:text-neonMagenta"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-gray-400 text-sm mb-2">Gastos</h3>
-            <div className="space-y-2">
-              {expenseCategories.length === 0 ? (
-                <p className="text-gray-500 text-sm">Sin categorías. Crea una para clasificar gastos.</p>
-              ) : (
-                expenseCategories.map((cat, i) => (
-                  <motion.div
-                    key={cat.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="glass rounded-xl p-4 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="w-4 h-4 rounded-full"
-                        style={{ backgroundColor: cat.color_code }}
-                      />
-                      <span className="text-white">{cat.name}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => handleEdit(cat)}
-                        aria-label={`Editar categoría ${cat.name}`}
-                        className="p-2 text-gray-500 hover:text-neonCyan"
-                      >
-                        ✎
-                      </button>
-                      <button
-                        onClick={() => handleDelete(cat.id)}
-                        aria-label={`Borrar categoría ${cat.name}`}
-                        className="p-2 text-gray-500 hover:text-neonMagenta"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
       </div>
-
-      <Navigation />
     </div>
   )
 }

@@ -3,18 +3,22 @@ export type SavingPotMovementType = 'deposit' | 'withdrawal'
 
 export interface Transaction {
   id: string
+  user_id: string
   amount: number
   date: string
   description: string
   category_id: string
   type: TransactionType
+  created_at?: string
 }
 
 export interface Category {
   id: string
+  user_id: string
   name: string
   type: TransactionType
   color_code: string
+  created_at?: string
 }
 
 export interface UserSettings {

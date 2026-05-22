@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-  amount DECIMAL(12, 2) NOT NULL,
+  amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
   date DATE NOT NULL DEFAULT CURRENT_DATE,
   description TEXT DEFAULT '',
-  category_id UUID REFERENCES categories(id) ON DELETE SET NULL NOT NULL,
+  category_id UUID REFERENCES categories(id) ON DELETE RESTRICT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS saving_pots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   name TEXT NOT NULL,
-  target_amount DECIMAL(12, 2) NOT NULL DEFAULT 0,
+  target_amount DECIMAL(12, 2) NOT NULL DEFAULT 0 CHECK (target_amount >= 0),
   color_code TEXT NOT NULL DEFAULT '#00D9FF',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -67,7 +67,8 @@ ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own categories" ON categories;
 
 CREATE POLICY "Users can manage own categories" ON categories
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Transactions RLS
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
@@ -75,7 +76,8 @@ ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own transactions" ON transactions;
 
 CREATE POLICY "Users can manage own transactions" ON transactions
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- User settings RLS
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
@@ -83,7 +85,8 @@ ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own settings" ON user_settings;
 
 CREATE POLICY "Users can manage own settings" ON user_settings
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Saving pots RLS
 ALTER TABLE saving_pots ENABLE ROW LEVEL SECURITY;
@@ -91,7 +94,8 @@ ALTER TABLE saving_pots ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own saving pots" ON saving_pots;
 
 CREATE POLICY "Users can manage own saving pots" ON saving_pots
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Saving pot movements RLS
 ALTER TABLE saving_pot_movements ENABLE ROW LEVEL SECURITY;
@@ -99,7 +103,8 @@ ALTER TABLE saving_pot_movements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own saving pot movements" ON saving_pot_movements;
 
 CREATE POLICY "Users can manage own saving pot movements" ON saving_pot_movements
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- ============================================
 -- INDEXES FOR PERFORMANCE
@@ -109,7 +114,10 @@ CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_type ON transactions(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pots_user ON saving_pots(user_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_user ON saving_pot_movements(user_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_pot ON saving_pot_movements(pot_id);
+CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_user_pot_created ON saving_pot_movements(user_id, pot_id, created_at DESC);

@@ -1,10 +1,9 @@
-import { User } from '@supabase/supabase-js'
+'use client'
 
-interface UserBadgeProps {
-  user: User | null
-}
+import { useSupabase } from '@/components/SupabaseProvider'
 
-export function UserBadge({ user }: UserBadgeProps) {
+export function UserBadge() {
+  const { user } = useSupabase()
   const email = user?.email || 'Sesión activa'
   const initial = email.charAt(0).toUpperCase()
 

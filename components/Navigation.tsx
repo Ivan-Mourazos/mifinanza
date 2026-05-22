@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
-import { User } from '@supabase/supabase-js'
+import { useMemo } from 'react'
+import { useSupabase } from '@/components/SupabaseProvider'
 
 const navItems = [
   { href: '/dashboard', label: 'Inicio', icon: '◈' },
@@ -16,18 +16,14 @@ const navItems = [
 
 export function Navigation() {
   const pathname = usePathname()
-  const [user, setUser] = useState<User | null>(null)
-  const supabase = createClient()
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user)
-    })
-  }, [supabase])
+  const router = useRouter()
+  const { user } = useSupabase()
+  const supabase = useMemo(() => createClient(), [])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
-    window.location.href = '/auth'
+    router.replace('/auth')
+    router.refresh()
   }
 
   return (
