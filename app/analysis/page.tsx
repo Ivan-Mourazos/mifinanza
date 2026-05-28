@@ -1,6 +1,6 @@
 'use client'
 
-import { FormEvent, useMemo, useState } from 'react'
+import { useEffect, FormEvent, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { endOfMonth, format, startOfMonth } from 'date-fns'
 import { UserBadge } from '@/components/UserBadge'
@@ -48,7 +48,12 @@ export default function AnalysisPage() {
     setRange({ from: fromDate, to: toDate })
   }
 
-  if (loading && transactions.length === 0) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted || (loading && transactions.length === 0)) {
     return <LoadingScreen message="Cargando análisis..." />
   }
 

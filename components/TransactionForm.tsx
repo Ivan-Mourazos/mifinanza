@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Category, SavingPotMovementType, TransactionType } from '@/lib/types'
 
 export type MovementFormType = TransactionType | 'pot'
@@ -22,6 +23,7 @@ interface TransactionFormProps {
   onCategoryChange: (value: string) => void
   onCancel: () => void
   onSubmit: (event: React.FormEvent) => void
+  onCreateCategory?: (name: string, colorCode: string) => Promise<{ data: Category | null; error: string | null }>
 }
 
 export function TransactionForm({
@@ -42,7 +44,36 @@ export function TransactionForm({
   onCategoryChange,
   onCancel,
   onSubmit,
+  onCreateCategory,
 }: TransactionFormProps) {
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatColor, setNewCatColor] = useState('#22C55E')
+  const [creatingCat, setCreatingCat] = useState(false)
+  const [catError, setCatError] = useState<string | null>(null)
+
+  const handleCreateCategorySubmit = async () => {
+    const trimmed = newCatName.trim()
+    if (!trimmed || !onCreateCategory) return
+
+    setCreatingCat(true)
+    setCatError(null)
+
+    try {
+      const result = await onCreateCategory(trimmed, newCatColor)
+      if (result.error) {
+        setCatError(result.error)
+      } else if (result.data) {
+        onCategoryChange(result.data.id)
+        setNewCatName('')
+        setNewCatColor('#22C55E')
+      }
+    } catch (err) {
+      setCatError('Error al crear la categoría.')
+    } finally {
+      setCreatingCat(false)
+    }
+  }
+
   const filteredCategories =
     type === 'pot' ? [] : categories.filter((category) => category.type === type)
 
@@ -145,24 +176,83 @@ export function TransactionForm({
       )}
 
       {type !== 'pot' && (
-        <div>
-          <label htmlFor="transaction-category" className="mb-2 block text-sm text-gray-300">
-            Categoría
-          </label>
-          <select
-            id="transaction-category"
-            value={categoryId}
-            onChange={(event) => onCategoryChange(event.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-surface px-4 py-3 text-white focus:border-neonCyan/50 focus:outline-none"
-            required
-          >
-            <option value="">Seleccionar categoría</option>
-            {filteredCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="transaction-category" className="mb-2 block text-sm text-gray-300">
+              Categoría
+            </label>
+            <select
+              id="transaction-category"
+              value={categoryId}
+              onChange={(event) => onCategoryChange(event.target.value)}
+              className="w-full rounded-lg border border-white/10 bg-surface px-4 py-3 text-white focus:border-neonCyan/50 focus:outline-none"
+              required
+            >
+              <option value="">Seleccionar categoría</option>
+              {filteredCategories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+              <option value="__new__" className="text-neonCyan font-semibold">
+                + Nueva Categoría...
               </option>
-            ))}
-          </select>
+            </select>
+          </div>
+
+          {categoryId === '__new__' && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+              <p className="text-xs font-semibold text-white uppercase tracking-wider">Nueva Categoría</p>
+              {catError && <p className="text-xs text-neonMagenta">{catError}</p>}
+              <div>
+                <input
+                  type="text"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  placeholder="Nombre de la categoría (ej. Gimnasio)"
+                  className="w-full rounded-lg border border-white/10 bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-neonCyan/50 focus:outline-none"
+                  required={categoryId === '__new__'}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5">Color</label>
+                <div className="flex gap-2 flex-wrap">
+                  {['#FF2D55', '#22C55E', '#00D9FF', '#A855F7', '#F97316', '#EAB308', '#64748B'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewCatColor(c)}
+                      className={`h-6 w-6 rounded-full border-2 transition-all ${
+                        newCatColor === c ? 'border-white scale-110' : 'border-transparent opacity-60'
+                      }`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={creatingCat || !newCatName.trim()}
+                  onClick={handleCreateCategorySubmit}
+                  className="flex-1 rounded-lg bg-neonCyan py-2 text-xs font-semibold text-background disabled:opacity-50"
+                >
+                  {creatingCat ? 'Creando...' : 'Crear Categoría'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCategoryChange('')
+                    setCatError(null)
+                    setNewCatName('')
+                  }}
+                  className="flex-1 rounded-lg bg-white/10 py-2 text-xs font-medium text-white"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -176,7 +266,7 @@ export function TransactionForm({
         </button>
         <button
           type="submit"
-          disabled={saving}
+          disabled={saving || categoryId === '__new__'}
           className="flex-1 rounded-lg bg-neonCyan py-3 font-semibold text-background shadow-cyan disabled:opacity-50"
         >
           {saving ? 'Guardando...' : editing ? 'Actualizar' : 'Agregar'}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { UserBadge } from '@/components/UserBadge'
 import { CategoryForm } from '@/components/CategoryForm'
@@ -103,7 +103,12 @@ export default function CategoriesPage() {
     [categories]
   )
 
-  if (coreLoading) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted || coreLoading) {
     return <LoadingScreen message="Cargando categorías..." />
   }
 

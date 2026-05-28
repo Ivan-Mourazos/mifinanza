@@ -79,7 +79,7 @@ export async function savePotMovement(
 export async function saveCategory(
   supabase: SupabaseClient,
   input: SaveCategoryInput
-): Promise<{ error: string | null }> {
+): Promise<{ data: any | null; error: string | null }> {
   const data = {
     user_id: input.userId,
     name: input.name,
@@ -87,11 +87,14 @@ export async function saveCategory(
     color_code: input.colorCode,
   }
 
-  const result = input.id
-    ? await supabase.from('categories').update(data).eq('id', input.id)
-    : await supabase.from('categories').insert(data)
+  const query = input.id
+    ? supabase.from('categories').update(data).eq('id', input.id).select()
+    : supabase.from('categories').insert(data).select()
 
-  return { error: result.error ? 'No se pudo guardar la categoría.' : null }
+  const { data: rows, error } = await query
+  const savedRow = rows?.[0] || null
+
+  return { data: savedRow, error: error ? 'No se pudo guardar la categoría.' : null }
 }
 
 export async function deleteCategory(

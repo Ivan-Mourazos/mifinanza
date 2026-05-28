@@ -167,7 +167,12 @@ export default function DashboardPage() {
     return () => window.removeEventListener('keydown', handleEscape)
   }, [showBalanceModal])
 
-  if (loading) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted || loading) {
     return <LoadingScreen message="Cargando tu resumen..." />
   }
 
