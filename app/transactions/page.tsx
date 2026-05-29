@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { addMonths, endOfMonth, format, startOfMonth } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -9,16 +9,18 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ErrorBanner } from '@/components/ErrorBanner'
 import { LoadingScreen } from '@/components/LoadingScreen'
 import { PageShell } from '@/components/PageShell'
-import { MovementFormType, TransactionForm } from '@/components/TransactionForm'
+import { MovementFormType, TransactionForm, DescriptionSuggestion } from '@/components/TransactionForm'
 import { useFinanceData } from '@/hooks/useFinanceData'
 import { DEFAULT_CURRENCY, formatCurrency, getTotals } from '@/lib/finance'
 import {
   deleteTransaction,
+  deletePotMovement,
   savePotMovement,
   saveTransaction,
   saveCategory,
 } from '@/lib/finance-mutations'
-import { SavingPotMovementType, Transaction } from '@/lib/types'
+import { fetchDescriptionSuggestions } from '@/lib/finance-api'
+import { SavingPotMovement, SavingPotMovementType, Transaction } from '@/lib/types'
 import { BankImportModal } from '@/components/BankImportModal'
 
 export default function TransactionsPage() {
@@ -37,6 +39,7 @@ export default function TransactionsPage() {
     transactions,
     settings,
     potsWithBalances,
+    potMovements,
     totalPotsBalance,
     categoryById,
     loading,
@@ -44,6 +47,18 @@ export default function TransactionsPage() {
     refresh,
     supabase,
   } = useFinanceData({ transactions: monthRange })
+
+  const regularPots = useMemo(() => {
+    return potsWithBalances?.filter((p) => p.name !== 'Retenciones') || []
+  }, [potsWithBalances])
+
+  const totalRegularPotsBalance = useMemo(() => {
+    return regularPots.reduce((sum, p) => sum + p.balance, 0)
+  }, [regularPots])
+
+  const filteredCategoriesForForm = useMemo(() => {
+    return categories.filter((c) => c.name !== 'Retenciones')
+  }, [categories])
 
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -57,6 +72,8 @@ export default function TransactionsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [deletePotTarget, setDeletePotTarget] = useState<SavingPotMovement | null>(null)
+  const [deletingPot, setDeletingPot] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState('all')
@@ -106,7 +123,7 @@ export default function TransactionsPage() {
     setFormError(null)
 
     if (type === 'pot') {
-      const defaultPot = potsWithBalances[0]
+      const defaultPot = regularPots[0] || potsWithBalances[0]
       if (!defaultPot) {
         setFormError('No se encontró el apartado.')
         setSaving(false)
@@ -194,6 +211,21 @@ export default function TransactionsPage() {
     setDeleting(false)
   }
 
+  const confirmDeletePotMovement = async () => {
+    if (!deletePotTarget) return
+    setDeletingPot(true)
+    setFormError(null)
+    const { error: deleteError } = await deletePotMovement(supabase, deletePotTarget.id)
+    if (deleteError) {
+      setFormError(deleteError)
+      setDeletingPot(false)
+      return
+    }
+    await refresh()
+    setDeletePotTarget(null)
+    setDeletingPot(false)
+  }
+
   const handleCreateCategory = async (name: string, colorCode: string) => {
     if (!user) return { data: null, error: 'Usuario no autenticado.' }
 
@@ -234,10 +266,67 @@ export default function TransactionsPage() {
   const currency = settings?.currency || DEFAULT_CURRENCY
   const monthLabel = format(selectedMonth, 'MMMM yyyy', { locale: es })
 
+  // Pot movements filtered to the selected month
+  const primaryPot = regularPots[0] || potsWithBalances[0]
+  const filteredPotMovements = useMemo(() => {
+    if (!potMovements) return []
+    return potMovements.filter((pm) => {
+      const d = new Date(pm.created_at)
+      const inMonth =
+        d >= new Date(monthRange.from) && d <= new Date(monthRange.to + 'T23:59:59')
+      const matchSearch =
+        !search || (pm.note || '').toLowerCase().includes(search.toLowerCase()) ||
+        (primaryPot?.name || '').toLowerCase().includes(search.toLowerCase())
+      const matchType = selectedType === 'all' || selectedType === 'pot'
+      return inMonth && matchSearch && matchType
+    })
+  }, [potMovements, monthRange, search, selectedType, primaryPot])
+
+  // Unified list: transactions + pot movements sorted by date desc
+  type ListItem =
+    | { kind: 'tx'; data: Transaction }
+    | { kind: 'pot'; data: SavingPotMovement }
+
+  const unifiedList = useMemo<ListItem[]>(() => {
+    const txItems: ListItem[] = filteredTransactions.map((t) => ({ kind: 'tx', data: t }))
+    const potItems: ListItem[] = filteredPotMovements.map((pm) => ({ kind: 'pot', data: pm }))
+    return [...txItems, ...potItems].sort((a, b) => {
+      const dateA = a.kind === 'tx' ? a.data.date : a.data.created_at.slice(0, 10)
+      const dateB = b.kind === 'tx' ? b.data.date : b.data.created_at.slice(0, 10)
+      return dateB.localeCompare(dateA)
+    })
+  }, [filteredTransactions, filteredPotMovements])
+
+  // All-time description suggestions (not limited to the current month)
+  const [descriptionSuggestions, setDescriptionSuggestions] = useState<DescriptionSuggestion[]>([])
+
+  const refreshDescriptionSuggestions = useCallback(async () => {
+    if (!user) return
+    const { data } = await fetchDescriptionSuggestions(supabase, user.id)
+    // Deduplicate by description, keeping the first (most recent) occurrence
+    const seen = new Set<string>()
+    const unique: DescriptionSuggestion[] = []
+    for (const row of data) {
+      if (!row.description || seen.has(row.description)) continue
+      seen.add(row.description)
+      unique.push({
+        description: row.description,
+        categoryId: row.category_id,
+        type: row.type as 'income' | 'expense',
+      })
+    }
+    setDescriptionSuggestions(unique)
+  }, [supabase, user])
+
   const [mounted, setMounted] = useState(false)
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Fetch all-time description suggestions once user is ready
+  useEffect(() => {
+    refreshDescriptionSuggestions()
+  }, [refreshDescriptionSuggestions])
 
   if (!mounted || loading) {
     return <LoadingScreen message="Cargando movimientos..." />
@@ -344,7 +433,7 @@ export default function TransactionsPage() {
           <div className="rounded-xl bg-white/[0.03] p-3">
             <p className="text-xs text-gray-500">Apartado</p>
             <p className="mt-1 font-semibold text-neonCyan">
-              {formatCurrency(totalPotsBalance, currency)}
+              {formatCurrency(totalRegularPotsBalance, currency)}
             </p>
           </div>
         </div>
@@ -431,9 +520,10 @@ export default function TransactionsPage() {
               type={type}
               potAction={potAction}
               categoryId={categoryId}
-              categories={categories}
+              categories={filteredCategoriesForForm}
               saving={saving}
               editing={Boolean(editingId)}
+              descriptionSuggestions={descriptionSuggestions}
               onAmountChange={setAmount}
               onDescriptionChange={setDescription}
               onDateChange={setDate}
@@ -478,7 +568,57 @@ export default function TransactionsPage() {
 
 
       <div className="space-y-2">
-        {filteredTransactions.map((transaction, index) => {
+        {unifiedList.map((item, index) => {
+          if (item.kind === 'pot') {
+            const pm = item.data
+            const pot = primaryPot
+            const isDeposit = pm.type === 'deposit'
+            return (
+              <motion.div
+                key={`pot-${pm.id}`}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(index * 0.015, 0.15) }}
+                className="glass flex items-center justify-between rounded-xl p-4 border border-neonCyan/10"
+              >
+                <div className="flex flex-1 items-center gap-3">
+                  <span className="text-base" aria-hidden>🪙</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-white">
+                        {pm.note || pot?.name || 'Apartado'}
+                      </p>
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                        isDeposit ? 'bg-neonCyan/15 text-neonCyan' : 'bg-neonMagenta/15 text-neonMagenta'
+                      }`}>
+                        {isDeposit ? '↑ Apartado' : '↓ Recuperado'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {format(new Date(pm.created_at), 'dd MMM yyyy', { locale: es })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className={`font-medium ${
+                    isDeposit ? 'text-neonCyan' : 'text-neonMagenta'
+                  }`}>
+                    {isDeposit ? '' : '-'}{formatCurrency(Number(pm.amount), currency)}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setDeletePotTarget(pm)}
+                    aria-label={`Borrar movimiento de apartado`}
+                    className="p-2 text-gray-500 hover:text-neonMagenta"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </motion.div>
+            )
+          }
+
+          const transaction = item.data
           const category = categoryById.get(transaction.category_id)
           return (
             <motion.div
@@ -536,7 +676,7 @@ export default function TransactionsPage() {
           )
         })}
 
-        {filteredTransactions.length === 0 && (
+        {unifiedList.length === 0 && (
           <div className="py-8 text-center text-gray-500">
             Aún no hay movimientos. Crea el primero para ver tu resumen.
           </div>
@@ -554,6 +694,19 @@ export default function TransactionsPage() {
           if (!deleting) setDeleteTarget(null)
         }}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deletePotTarget)}
+        title="Borrar movimiento de apartado"
+        description="Esto ajustará el saldo del apartado. No se puede deshacer."
+        confirmLabel="Borrar"
+        loading={deletingPot}
+        destructive
+        onCancel={() => {
+          if (!deletingPot) setDeletePotTarget(null)
+        }}
+        onConfirm={confirmDeletePotMovement}
       />
 
       <BankImportModal

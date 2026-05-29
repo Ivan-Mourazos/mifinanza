@@ -76,6 +76,15 @@ export async function savePotMovement(
   return { error: error ? 'No se pudo registrar el movimiento de apartado.' : null }
 }
 
+export async function deletePotMovement(
+  supabase: SupabaseClient,
+  id: string
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('saving_pot_movements').delete().eq('id', id)
+
+  return { error: error ? 'No se pudo borrar el movimiento de apartado.' : null }
+}
+
 export async function saveCategory(
   supabase: SupabaseClient,
   input: SaveCategoryInput

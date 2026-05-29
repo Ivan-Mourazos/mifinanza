@@ -148,6 +148,31 @@ export async function fetchTransactions(
   return { data: response.data || [], error: null }
 }
 
+export type DescriptionSuggestionRow = {
+  description: string
+  category_id: string
+  type: string
+}
+
+export async function fetchDescriptionSuggestions(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<{ data: DescriptionSuggestionRow[]; error: string | null }> {
+  const response = await supabase
+    .from('transactions')
+    .select('description, category_id, type')
+    .eq('user_id', userId)
+    .not('description', 'is', null)
+    .neq('description', '')
+    .order('date', { ascending: false })
+
+  if (response.error) {
+    return { data: [], error: null } // non-critical — fail silently
+  }
+
+  return { data: response.data || [], error: null }
+}
+
 export async function fetchTransactionTotals(
   supabase: SupabaseClient,
   userId: string

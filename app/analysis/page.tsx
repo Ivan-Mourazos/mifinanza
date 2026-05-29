@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, FormEvent, useMemo, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { endOfMonth, format, startOfMonth } from 'date-fns'
+import { es } from 'date-fns/locale'
 import { UserBadge } from '@/components/UserBadge'
 import { ErrorBanner } from '@/components/ErrorBanner'
 import { LoadingScreen } from '@/components/LoadingScreen'
 import { PageShell } from '@/components/PageShell'
 import { useFinanceData } from '@/hooks/useFinanceData'
+import { Transaction } from '@/lib/types'
 import {
   DEFAULT_CURRENCY,
   formatCurrency,
@@ -155,12 +157,14 @@ export default function AnalysisPage() {
         <BreakdownCard
           title="Gastos por categoría"
           items={expenseBreakdown}
+          transactions={transactions}
           currency={currency}
           emptyText="No hay gastos en este periodo."
         />
         <BreakdownCard
           title="Ingresos por categoría"
           items={incomeBreakdown}
+          transactions={transactions}
           currency={currency}
           emptyText="No hay ingresos en este periodo."
         />
@@ -172,12 +176,14 @@ export default function AnalysisPage() {
 interface BreakdownCardProps {
   title: string
   items: { id: string; name: string; value: number; color: string }[]
+  transactions: Transaction[]
   currency: string
   emptyText: string
 }
 
-function BreakdownCard({ title, items, currency, emptyText }: BreakdownCardProps) {
+function BreakdownCard({ title, items, transactions, currency, emptyText }: BreakdownCardProps) {
   const maxValue = Math.max(...items.map((item) => item.value), 0)
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null)
 
   return (
     <div className="glass rounded-2xl p-5">
@@ -188,28 +194,82 @@ function BreakdownCard({ title, items, currency, emptyText }: BreakdownCardProps
         <div className="mt-4 space-y-4">
           {items.map((item) => {
             const width = maxValue > 0 ? `${Math.max((item.value / maxValue) * 100, 8)}%` : '8%'
+            const isExpanded = expandedCategoryId === item.id
+            
+            // Filter transactions of this category
+            const categoryTransactions = transactions
+              .filter((t) => t.category_id === item.id)
+              .sort((a, b) => b.date.localeCompare(a.date))
 
             return (
-              <div key={item.id}>
-                <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                  <span className="flex items-center gap-2 text-gray-300">
+              <div key={item.id} className="group">
+                <button
+                  type="button"
+                  onClick={() => setExpandedCategoryId(isExpanded ? null : item.id)}
+                  className="mb-2 flex w-full items-center justify-between gap-3 text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-neonCyan rounded-lg py-0.5 text-left"
+                >
+                  <span className="flex items-center gap-2 text-gray-300 group-hover:text-white transition-colors">
                     <span
-                      className="h-2.5 w-2.5 rounded-full"
+                      className="h-2.5 w-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: item.color }}
                     />
-                    {item.name}
+                    <span className="font-medium truncate">{item.name}</span>
+                    <span className="text-[10px] text-gray-500 shrink-0 font-normal">
+                      ({categoryTransactions.length} {categoryTransactions.length === 1 ? 'mov.' : 'movs.'})
+                    </span>
                   </span>
-                  <span className="font-medium text-white">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
                     {formatCurrency(item.value, currency)}
+                    <span className={`text-[10px] text-gray-500 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-neonCyan' : ''}`}>
+                      ▶
+                    </span>
                   </span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                </button>
+                <div 
+                  onClick={() => setExpandedCategoryId(isExpanded ? null : item.id)}
+                  className="h-2 overflow-hidden rounded-full bg-white/10 cursor-pointer"
+                >
                   <div
-                    className="h-full rounded-full bg-neonCyan"
+                    className="h-full rounded-full bg-neonCyan transition-all duration-300"
                     style={{ width }}
                     aria-hidden="true"
                   />
                 </div>
+
+                <AnimatePresence initial={false}>
+                  {isExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="mt-2 pl-3 space-y-1.5 overflow-hidden border-l border-white/5 ml-1.5"
+                    >
+                      {categoryTransactions.length === 0 ? (
+                        <p className="text-xs text-gray-500 py-1">Sin movimientos.</p>
+                      ) : (
+                        categoryTransactions.map((t) => (
+                          <div
+                            key={t.id}
+                            className="pl-3 pr-2 py-1.5 flex items-center justify-between text-xs hover:bg-white/[0.02] transition-colors rounded-lg border-b border-white/[0.02] last:border-b-0"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-gray-300 truncate font-medium">
+                                {t.description || item.name}
+                              </p>
+                              <p className="text-[10px] text-gray-500">
+                                {format(new Date(t.date), 'dd MMM yyyy', { locale: es })}
+                              </p>
+                            </div>
+                            <p className="font-semibold text-white pl-2 shrink-0">
+                              {formatCurrency(Number(t.amount), currency)}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )
           })}

@@ -1,7 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Category, SavingPotMovementType, TransactionType } from '@/lib/types'
+
+export interface DescriptionSuggestion {
+  description: string
+  categoryId: string
+  type: TransactionType
+}
 
 export type MovementFormType = TransactionType | 'pot'
 
@@ -15,6 +21,7 @@ interface TransactionFormProps {
   categories: Category[]
   saving: boolean
   editing: boolean
+  descriptionSuggestions?: DescriptionSuggestion[]
   onAmountChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onDateChange: (value: string) => void
@@ -36,6 +43,7 @@ export function TransactionForm({
   categories,
   saving,
   editing,
+  descriptionSuggestions = [],
   onAmountChange,
   onDescriptionChange,
   onDateChange,
@@ -50,6 +58,65 @@ export function TransactionForm({
   const [newCatColor, setNewCatColor] = useState('#22C55E')
   const [creatingCat, setCreatingCat] = useState(false)
   const [catError, setCatError] = useState<string | null>(null)
+
+  // ── Autocomplete state ────────────────────────────────────────────────────
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
+  const descWrapperRef = useRef<HTMLDivElement>(null)
+
+  // Filter suggestions by current type (expense/income) and query
+  const filteredSuggestions = descriptionSuggestions
+    .filter(
+      (s) =>
+        (type === 'pot' || s.type === type) &&
+        s.description.toLowerCase().includes(description.toLowerCase())
+    )
+    .slice(0, 8) // max 8 items
+
+  // Close on outside click
+  useEffect(() => {
+    function handleOutsideClick(e: MouseEvent) {
+      if (descWrapperRef.current && !descWrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false)
+        setHighlightedIndex(-1)
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [])
+
+  const handleDescriptionChange = (value: string) => {
+    onDescriptionChange(value)
+    setShowSuggestions(true)
+    setHighlightedIndex(-1)
+  }
+
+  const handleSelectSuggestion = (suggestion: DescriptionSuggestion) => {
+    onDescriptionChange(suggestion.description)
+    // Auto-select category only if it matches the current transaction type
+    if (type !== 'pot' && suggestion.type === type) {
+      onCategoryChange(suggestion.categoryId)
+    }
+    setShowSuggestions(false)
+    setHighlightedIndex(-1)
+  }
+
+  const handleDescriptionKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions || filteredSuggestions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex((i) => Math.min(i + 1, filteredSuggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex((i) => Math.max(i - 1, -1))
+    } else if (e.key === 'Enter' && highlightedIndex >= 0) {
+      e.preventDefault()
+      handleSelectSuggestion(filteredSuggestions[highlightedIndex])
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+      setHighlightedIndex(-1)
+    }
+  }
 
   const handleCreateCategorySubmit = async () => {
     const trimmed = newCatName.trim()
@@ -145,18 +212,87 @@ export function TransactionForm({
         />
       </div>
 
-      <div>
+      <div ref={descWrapperRef} className="relative">
         <label htmlFor="transaction-description" className="mb-2 block text-sm text-gray-300">
           Descripción
         </label>
-        <input
-          id="transaction-description"
-          type="text"
-          value={description}
-          onChange={(event) => onDescriptionChange(event.target.value)}
-          placeholder="Descripción (opcional)"
-          className="w-full rounded-lg border border-white/10 bg-surface px-4 py-3 text-white placeholder-gray-500 focus:border-neonCyan/50 focus:outline-none"
-        />
+        <div className="relative">
+          <input
+            id="transaction-description"
+            type="text"
+            value={description}
+            onChange={(e) => handleDescriptionChange(e.target.value)}
+            onFocus={() => setShowSuggestions(true)}
+            onKeyDown={handleDescriptionKeyDown}
+            placeholder="Descripción (opcional)"
+            autoComplete="off"
+            className="w-full rounded-lg border border-white/10 bg-surface px-4 py-3 pr-10 text-white placeholder-gray-500 focus:border-neonCyan/50 focus:outline-none"
+          />
+          {/* Toggle button */}
+          {descriptionSuggestions.length > 0 && (
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={() => setShowSuggestions((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-neonCyan transition-colors"
+              aria-label="Ver sugerencias"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className={`h-4 w-4 transition-transform duration-200 ${
+                  showSuggestions ? 'rotate-180' : ''
+                }`}
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* Suggestions dropdown */}
+        {showSuggestions && filteredSuggestions.length > 0 && (
+          <ul
+            role="listbox"
+            className="absolute z-50 mt-1 w-full overflow-hidden rounded-xl border border-white/10 bg-[#1a1a2e] shadow-2xl"
+          >
+            {filteredSuggestions.map((suggestion, idx) => (
+              <li
+                key={`${suggestion.description}-${idx}`}
+                role="option"
+                aria-selected={idx === highlightedIndex}
+                onMouseDown={(e) => {
+                  e.preventDefault() // prevent input blur before click registers
+                  handleSelectSuggestion(suggestion)
+                }}
+                onMouseEnter={() => setHighlightedIndex(idx)}
+                className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors ${
+                  idx === highlightedIndex
+                    ? 'bg-neonCyan/10 text-neonCyan'
+                    : 'text-gray-300 hover:bg-white/5'
+                } ${
+                  idx < filteredSuggestions.length - 1 ? 'border-b border-white/5' : ''
+                }`}
+              >
+                <span className="min-w-0 truncate">{suggestion.description}</span>
+                <span
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    suggestion.type === 'income'
+                      ? 'bg-neonGreen/10 text-neonGreen'
+                      : 'bg-neonMagenta/10 text-neonMagenta'
+                  }`}
+                >
+                  {suggestion.type === 'income' ? 'Ingreso' : 'Gasto'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {type !== 'pot' && (

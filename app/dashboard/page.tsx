@@ -10,7 +10,7 @@ import { LoadingScreen } from '@/components/LoadingScreen'
 import { ErrorBanner } from '@/components/ErrorBanner'
 import { PageShell } from '@/components/PageShell'
 import { useFinanceData } from '@/hooks/useFinanceData'
-import { saveInitialBalance, saveSavingPot } from '@/lib/finance-mutations'
+import { saveInitialBalance } from '@/lib/finance-mutations'
 import {
   DEFAULT_CURRENCY,
   formatCurrency,
@@ -59,30 +59,76 @@ export default function DashboardPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const balanceInputRef = useRef<HTMLInputElement>(null)
 
-  const [showPotModal, setShowPotModal] = useState(false)
-  const [potName, setPotName] = useState('')
-  const [potTarget, setPotTarget] = useState('')
-  const [potColor, setPotColor] = useState('')
-  const [savingPot, setSavingPot] = useState(false)
-  const [potError, setPotError] = useState<string | null>(null)
+  const [alignWithBank, setAlignWithBank] = useState(true)
 
-  const { income, expense } = useMemo(
-    () => getTotals(transactions),
-    [transactions]
-  )
+  const retencionesCategory = useMemo(() => {
+    return Array.from(categoryById.values()).find(
+      (c) => c.name === 'Retenciones' && c.type === 'expense'
+    )
+  }, [categoryById])
+
+  const totalHoldsBalance = useMemo(() => {
+    if (!retencionesCategory) return 0
+    return transactions
+      .filter((t) => t.category_id === retencionesCategory.id && t.type === 'expense')
+      .reduce((sum, t) => sum + Number(t.amount), 0)
+  }, [transactions, retencionesCategory])
+
+  const displayTransactions = useMemo(() => {
+    if (!alignWithBank) return transactions
+
+    return transactions.filter((t) => {
+      if (t.type === 'income') {
+        const isSelfTransfer =
+          t.description.toLowerCase().includes('(ivan)') || t.description.toLowerCase() === 'ivan'
+        const isRefund =
+          t.category_id && categoryById.get(t.category_id)?.name === 'Devoluciones'
+        return !isSelfTransfer && !isRefund
+      } else {
+        const isSelfTransfer =
+          t.description.toLowerCase().includes('cuenta compartida') ||
+          t.description.toLowerCase().includes('(ivan)')
+        const isHold = retencionesCategory && t.category_id === retencionesCategory.id
+        return !isSelfTransfer && !isHold
+      }
+    })
+  }, [transactions, alignWithBank, categoryById, retencionesCategory])
+
+  const { income, expense } = useMemo(() => {
+    const raw = getTotals(displayTransactions)
+    if (!alignWithBank) return raw
+
+    // For bank aligned expense, subtract the refunds (Devoluciones category)
+    const totalRefunds = transactions
+      .filter((t) => t.type === 'income' && categoryById.get(t.category_id)?.name === 'Devoluciones')
+      .reduce((sum, t) => sum + Number(t.amount), 0)
+
+    const alignedExpense = Math.max(0, raw.expense - totalRefunds)
+    return { income: raw.income, expense: alignedExpense }
+  }, [displayTransactions, alignWithBank, transactions, categoryById])
+
   const currency = settings?.currency || DEFAULT_CURRENCY
   const initialBalance = settings?.initial_balance || 0
   const accountBalance = initialBalance + transactionTotals.balance
-  const availableBalance = accountBalance - totalPotsBalance
-  const totalWorth = availableBalance + totalPotsBalance
+
+  const regularPots = useMemo(() => {
+    return potsWithBalances?.filter((p) => p.name !== 'Retenciones') || []
+  }, [potsWithBalances])
+
+  const totalRegularPotsBalance = useMemo(() => {
+    return regularPots.reduce((sum, p) => sum + p.balance, 0)
+  }, [regularPots])
+
+  const availableBalance = accountBalance - totalRegularPotsBalance
+  const totalWorth = availableBalance + totalRegularPotsBalance + totalHoldsBalance
 
   const expenseByCategory = useMemo(
-    () => getCategoryBreakdown(transactions, categoryById, 'expense'),
-    [categoryById, transactions]
+    () => getCategoryBreakdown(displayTransactions, categoryById, 'expense'),
+    [categoryById, displayTransactions]
   )
   const incomeByCategory = useMemo(
-    () => getCategoryBreakdown(transactions, categoryById, 'income'),
-    [categoryById, transactions]
+    () => getCategoryBreakdown(displayTransactions, categoryById, 'income'),
+    [categoryById, displayTransactions]
   )
 
   const saveBalance = async () => {
@@ -117,39 +163,7 @@ export default function DashboardPage() {
     setSaving(false)
   }
 
-  const primaryPot = potsWithBalances?.[0]
-
-  const handleSavePot = async () => {
-    if (!user || !primaryPot) return
-
-    setSavingPot(true)
-    setPotError(null)
-
-    const targetAmount = parseFloat(potTarget.replace(',', '.'))
-    if (isNaN(targetAmount) || targetAmount < 0) {
-      setPotError('Ingresa un objetivo válido.')
-      setSavingPot(false)
-      return
-    }
-
-    const { error: saveError } = await saveSavingPot(supabase, {
-      id: primaryPot.id,
-      userId: user.id,
-      name: potName.trim() || 'Mi Apartado',
-      targetAmount,
-      colorCode: potColor || '#00D9FF',
-    })
-
-    if (saveError) {
-      setPotError(saveError)
-      setSavingPot(false)
-      return
-    }
-
-    await refresh()
-    setShowPotModal(false)
-    setSavingPot(false)
-  }
+  const primaryPot = potsWithBalances?.find(p => p.name !== 'Retenciones') || potsWithBalances?.[0]
 
   useEffect(() => {
     if (showBalanceModal) {
@@ -159,7 +173,6 @@ export default function DashboardPage() {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowBalanceModal(false)
-        setShowPotModal(false)
       }
     }
 
@@ -208,64 +221,65 @@ export default function DashboardPage() {
         </p>
       </motion.button>
 
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="flex items-center justify-between glass rounded-2xl p-4"
+      >
+        <div>
+          <h4 className="text-sm font-semibold text-white">Estadísticas bancarias</h4>
+          <p className="text-xs text-gray-500">Alinear ingresos y gastos con el banco (excluir transferencias propias y reembolsos)</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAlignWithBank(!alignWithBank)}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-neonCyan focus:ring-offset-2 focus:ring-offset-background ${
+            alignWithBank ? 'bg-neonCyan' : 'bg-white/10'
+          }`}
+          role="switch"
+          aria-checked={alignWithBank}
+        >
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
+              alignWithBank ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </motion.div>
+
       {primaryPot && (
         <motion.div
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="glass rounded-2xl p-5 space-y-3"
+          className="glass rounded-2xl p-5 space-y-1"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span
-                className="h-3 w-3 rounded-full"
-                style={{ backgroundColor: primaryPot.color_code }}
-              />
-              <p className="text-sm font-semibold text-white">{primaryPot.name}</p>
-            </div>
-            <button
-              onClick={() => {
-                setPotName(primaryPot.name)
-                setPotTarget(String(primaryPot.target_amount))
-                setPotColor(primaryPot.color_code)
-                setPotError(null)
-                setShowPotModal(true)
-              }}
-              className="text-xs text-neonCyan hover:underline"
-            >
-              Configurar Meta
-            </button>
-          </div>
-
-          <div className="flex items-end justify-between text-sm">
-            <span className="font-bold text-neonCyan">
-              {formatCurrency(primaryPot.balance, currency)}
-            </span>
-            <span className="text-xs text-gray-400">
-              objetivo de {formatCurrency(primaryPot.target_amount, currency)} ({Math.round(primaryPot.progress)}%)
-            </span>
-          </div>
-
-          <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                backgroundColor: primaryPot.color_code,
-                width: `${primaryPot.progress}%`,
-              }}
+          <div className="flex items-center gap-2">
+            <span
+              className="h-3 w-3 rounded-full"
+              style={{ backgroundColor: primaryPot.color_code }}
             />
+            <p className="text-sm font-semibold text-white">{primaryPot.name}</p>
           </div>
+          <p className="text-2xl font-bold text-neonCyan pl-5">
+            {formatCurrency(primaryPot.balance, currency)}
+          </p>
         </motion.div>
       )}
 
       {error && <ErrorBanner message={error} onRetry={refresh} />}
       {saveError && <ErrorBanner message={saveError} />}
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
         <StatCard label="Ingresos" value={formatCurrency(income, currency)} tone="green" delay={0.2} />
         <StatCard label="Gastos" value={formatCurrency(expense, currency)} tone="magenta" delay={0.2} />
-        <StatCard label="Apartado" value={formatCurrency(totalPotsBalance, currency)} tone="cyan" delay={0.2} />
-        <StatCard label="Saldo total" value={formatCurrency(totalWorth, currency)} tone="white" delay={0.2} />
+        <StatCard label="Apartado" value={formatCurrency(totalRegularPotsBalance, currency)} tone="cyan" delay={0.2} />
+        <StatCard label="Retenciones" value={formatCurrency(totalHoldsBalance, currency)} tone="magenta" delay={0.2} />
+        <div className="col-span-2 sm:col-span-1 md:col-span-1">
+          <StatCard label="Saldo total" value={formatCurrency(totalWorth, currency)} tone="white" delay={0.2} className="w-full" />
+        </div>
       </div>
 
       {initialBalance > 0 && (
@@ -411,87 +425,6 @@ export default function DashboardPage() {
             </motion.div>
           </motion.div>
         )}
-
-        {showPotModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-            onClick={() => setShowPotModal(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.9 }}
-              role="dialog"
-              aria-modal="true"
-              className="glass w-full max-w-sm rounded-2xl p-6"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <h3 className="mb-4 text-xl font-bold text-white">Configurar Meta de Ahorro</h3>
-              {potError && <p className="mb-3 text-sm text-neonMagenta">{potError}</p>}
-              
-              <div className="space-y-4 mb-6">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Nombre del Apartado</label>
-                  <input
-                    type="text"
-                    value={potName}
-                    onChange={(e) => setPotName(e.target.value)}
-                    placeholder="Ej. Vacaciones, Coche..."
-                    className="w-full rounded-lg border border-white/10 bg-surface px-3 py-2 text-white focus:border-neonCyan focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Monto Objetivo ({currency})</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={potTarget}
-                    onChange={(e) => setPotTarget(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full rounded-lg border border-white/10 bg-surface px-3 py-2 text-white focus:border-neonCyan focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Color del Apartado</label>
-                  <div className="flex gap-2 justify-between">
-                    {['#00D9FF', '#00FF88', '#FF2D55', '#A855F7', '#FF9500', '#FFCC00'].map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setPotColor(c)}
-                        className={`h-8 w-8 rounded-full border-2 transition-all ${
-                          potColor === c ? 'border-white scale-110' : 'border-transparent opacity-60'
-                        }`}
-                        style={{ backgroundColor: c }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPotModal(false)}
-                  className="flex-1 rounded-lg bg-white/10 py-3 font-medium text-white"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSavePot}
-                  disabled={savingPot || !potTarget}
-                  className="flex-1 rounded-lg bg-neonCyan py-3 font-semibold text-background disabled:opacity-50"
-                >
-                  {savingPot ? 'Guardando...' : 'Guardar'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
       </AnimatePresence>
     </PageShell>
   )
@@ -502,11 +435,13 @@ function StatCard({
   value,
   tone,
   delay,
+  className,
 }: {
   label: string
   value: string
   tone: 'green' | 'magenta' | 'cyan' | 'white'
   delay: number
+  className?: string
 }) {
   const toneClass = {
     green: 'text-neonGreen',
@@ -520,7 +455,7 @@ function StatCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
-      className="glass rounded-2xl p-4"
+      className={`glass rounded-2xl p-4 ${className || ''}`}
     >
       <p className="mb-1 text-sm text-gray-400">{label}</p>
       <p className={`text-xl font-semibold ${toneClass}`}>{value}</p>
