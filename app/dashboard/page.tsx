@@ -59,76 +59,28 @@ export default function DashboardPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const balanceInputRef = useRef<HTMLInputElement>(null)
 
-  const [alignWithBank, setAlignWithBank] = useState(true)
-
-  const retencionesCategory = useMemo(() => {
-    return Array.from(categoryById.values()).find(
-      (c) => c.name === 'Retenciones' && c.type === 'expense'
-    )
-  }, [categoryById])
-
-  const totalHoldsBalance = useMemo(() => {
-    if (!retencionesCategory) return 0
-    return transactions
-      .filter((t) => t.category_id === retencionesCategory.id && t.type === 'expense')
-      .reduce((sum, t) => sum + Number(t.amount), 0)
-  }, [transactions, retencionesCategory])
-
-  const displayTransactions = useMemo(() => {
-    if (!alignWithBank) return transactions
-
-    return transactions.filter((t) => {
-      if (t.type === 'income') {
-        const isSelfTransfer =
-          t.description.toLowerCase().includes('(ivan)') || t.description.toLowerCase() === 'ivan'
-        const isRefund =
-          t.category_id && categoryById.get(t.category_id)?.name === 'Devoluciones'
-        return !isSelfTransfer && !isRefund
-      } else {
-        const isSelfTransfer =
-          t.description.toLowerCase().includes('cuenta compartida') ||
-          t.description.toLowerCase().includes('(ivan)')
-        const isHold = retencionesCategory && t.category_id === retencionesCategory.id
-        return !isSelfTransfer && !isHold
-      }
-    })
-  }, [transactions, alignWithBank, categoryById, retencionesCategory])
-
   const { income, expense } = useMemo(() => {
-    const raw = getTotals(displayTransactions)
-    if (!alignWithBank) return raw
-
-    // For bank aligned expense, subtract the refunds (Devoluciones category)
-    const totalRefunds = transactions
-      .filter((t) => t.type === 'income' && categoryById.get(t.category_id)?.name === 'Devoluciones')
-      .reduce((sum, t) => sum + Number(t.amount), 0)
-
-    const alignedExpense = Math.max(0, raw.expense - totalRefunds)
-    return { income: raw.income, expense: alignedExpense }
-  }, [displayTransactions, alignWithBank, transactions, categoryById])
+    return getTotals(transactions)
+  }, [transactions])
 
   const currency = settings?.currency || DEFAULT_CURRENCY
   const initialBalance = settings?.initial_balance || 0
   const accountBalance = initialBalance + transactionTotals.balance
 
-  const regularPots = useMemo(() => {
-    return potsWithBalances?.filter((p) => p.name !== 'Retenciones') || []
+  const totalRegularPotsBalance = useMemo(() => {
+    return potsWithBalances?.reduce((sum, p) => sum + p.balance, 0) || 0
   }, [potsWithBalances])
 
-  const totalRegularPotsBalance = useMemo(() => {
-    return regularPots.reduce((sum, p) => sum + p.balance, 0)
-  }, [regularPots])
-
   const availableBalance = accountBalance - totalRegularPotsBalance
-  const totalWorth = availableBalance + totalRegularPotsBalance + totalHoldsBalance
+  const totalWorth = accountBalance
 
   const expenseByCategory = useMemo(
-    () => getCategoryBreakdown(displayTransactions, categoryById, 'expense'),
-    [categoryById, displayTransactions]
+    () => getCategoryBreakdown(transactions, categoryById, 'expense'),
+    [categoryById, transactions]
   )
   const incomeByCategory = useMemo(
-    () => getCategoryBreakdown(displayTransactions, categoryById, 'income'),
-    [categoryById, displayTransactions]
+    () => getCategoryBreakdown(transactions, categoryById, 'income'),
+    [categoryById, transactions]
   )
 
   const saveBalance = async () => {
@@ -163,7 +115,7 @@ export default function DashboardPage() {
     setSaving(false)
   }
 
-  const primaryPot = potsWithBalances?.find(p => p.name !== 'Retenciones') || potsWithBalances?.[0]
+  const primaryPot = potsWithBalances?.[0]
 
   useEffect(() => {
     if (showBalanceModal) {
@@ -221,33 +173,6 @@ export default function DashboardPage() {
         </p>
       </motion.button>
 
-      <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-        className="flex items-center justify-between glass rounded-2xl p-4"
-      >
-        <div>
-          <h4 className="text-sm font-semibold text-white">Estadísticas bancarias</h4>
-          <p className="text-xs text-gray-500">Alinear ingresos y gastos con el banco (excluir transferencias propias y reembolsos)</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAlignWithBank(!alignWithBank)}
-          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-neonCyan focus:ring-offset-2 focus:ring-offset-background ${
-            alignWithBank ? 'bg-neonCyan' : 'bg-white/10'
-          }`}
-          role="switch"
-          aria-checked={alignWithBank}
-        >
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
-              alignWithBank ? 'translate-x-5' : 'translate-x-0'
-            }`}
-          />
-        </button>
-      </motion.div>
 
       {primaryPot && (
         <motion.div
@@ -272,14 +197,11 @@ export default function DashboardPage() {
       {error && <ErrorBanner message={error} onRetry={refresh} />}
       {saveError && <ErrorBanner message={saveError} />}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-4">
         <StatCard label="Ingresos" value={formatCurrency(income, currency)} tone="green" delay={0.2} />
         <StatCard label="Gastos" value={formatCurrency(expense, currency)} tone="magenta" delay={0.2} />
         <StatCard label="Apartado" value={formatCurrency(totalRegularPotsBalance, currency)} tone="cyan" delay={0.2} />
-        <StatCard label="Retenciones" value={formatCurrency(totalHoldsBalance, currency)} tone="magenta" delay={0.2} />
-        <div className="col-span-2 sm:col-span-1 md:col-span-1">
-          <StatCard label="Saldo total" value={formatCurrency(totalWorth, currency)} tone="white" delay={0.2} className="w-full" />
-        </div>
+        <StatCard label="Saldo total" value={formatCurrency(totalWorth, currency)} tone="white" delay={0.2} className="w-full" />
       </div>
 
       {initialBalance > 0 && (

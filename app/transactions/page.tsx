@@ -48,17 +48,6 @@ export default function TransactionsPage() {
     supabase,
   } = useFinanceData({ transactions: monthRange })
 
-  const regularPots = useMemo(() => {
-    return potsWithBalances?.filter((p) => p.name !== 'Retenciones') || []
-  }, [potsWithBalances])
-
-  const totalRegularPotsBalance = useMemo(() => {
-    return regularPots.reduce((sum, p) => sum + p.balance, 0)
-  }, [regularPots])
-
-  const filteredCategoriesForForm = useMemo(() => {
-    return categories.filter((c) => c.name !== 'Retenciones')
-  }, [categories])
 
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -123,7 +112,7 @@ export default function TransactionsPage() {
     setFormError(null)
 
     if (type === 'pot') {
-      const defaultPot = regularPots[0] || potsWithBalances[0]
+      const defaultPot = potsWithBalances?.[0]
       if (!defaultPot) {
         setFormError('No se encontró el apartado.')
         setSaving(false)
@@ -267,7 +256,7 @@ export default function TransactionsPage() {
   const monthLabel = format(selectedMonth, 'MMMM yyyy', { locale: es })
 
   // Pot movements filtered to the selected month
-  const primaryPot = regularPots[0] || potsWithBalances[0]
+  const primaryPot = potsWithBalances?.[0]
   const filteredPotMovements = useMemo(() => {
     if (!potMovements) return []
     return potMovements.filter((pm) => {
@@ -433,7 +422,7 @@ export default function TransactionsPage() {
           <div className="rounded-xl bg-white/[0.03] p-3">
             <p className="text-xs text-gray-500">Apartado</p>
             <p className="mt-1 font-semibold text-neonCyan">
-              {formatCurrency(totalRegularPotsBalance, currency)}
+              {formatCurrency(totalPotsBalance, currency)}
             </p>
           </div>
         </div>
@@ -520,7 +509,7 @@ export default function TransactionsPage() {
               type={type}
               potAction={potAction}
               categoryId={categoryId}
-              categories={filteredCategoriesForForm}
+              categories={categories}
               saving={saving}
               editing={Boolean(editingId)}
               descriptionSuggestions={descriptionSuggestions}

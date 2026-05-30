@@ -711,8 +711,8 @@ export function BankImportModal({
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-1.5">Color</label>
-                    <div className="flex gap-2 justify-between">
-                      {['#FF2D55', '#22C55E', '#00D9FF', '#A855F7', '#F97316', '#EAB308', '#64748B'].map((c) => (
+                    <div className="flex gap-2 flex-wrap">
+                      {['#FF2D55', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#A855F7', '#EC4899', '#14B8A6', '#F43F5E', '#D946EF', '#8B5CF6', '#3B82F6', '#06B6D4', '#10B981', '#F59E0B', '#EF4444', '#64748B'].map((c) => (
                         <button
                           key={c}
                           type="button"
