@@ -33,6 +33,7 @@ export function ExpensePieChart({ data, currency = DEFAULT_CURRENCY }: ExpensePi
               border: '1px solid rgba(255,255,255,0.1)',
               borderRadius: '8px',
             }}
+            itemStyle={{ color: '#fff' }}
             labelStyle={{ color: '#fff' }}
             formatter={(value: number) => formatCurrency(value, currency)}
           />

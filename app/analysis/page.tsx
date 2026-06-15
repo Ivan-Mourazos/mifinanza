@@ -230,8 +230,8 @@ function BreakdownCard({ title, items, transactions, currency, emptyText }: Brea
                   className="h-2 overflow-hidden rounded-full bg-white/10 cursor-pointer"
                 >
                   <div
-                    className="h-full rounded-full bg-neonCyan transition-all duration-300"
-                    style={{ width }}
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ width, backgroundColor: item.color }}
                     aria-hidden="true"
                   />
                 </div>

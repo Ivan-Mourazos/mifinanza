@@ -44,13 +44,22 @@ export function useFinanceData(options: UseFinanceDataOptions = {}) {
     ? `${transactionQuery.from ?? ''}|${transactionQuery.to ?? ''}|${transactionQuery.limit ?? ''}`
     : ''
 
+  const memoizedQuery = useMemo(() => {
+    if (!transactionQuery) return undefined
+    return {
+      from: transactionQuery.from,
+      to: transactionQuery.to,
+      limit: transactionQuery.limit,
+    }
+  }, [transactionQueryKey])
+
   const refreshTransactions = useCallback(async () => {
-    if (!user || !transactionQuery) return
+    if (!user || !memoizedQuery) return
 
     setTxLoading(true)
     setTxError(null)
 
-    const result = await fetchTransactions(supabase, user.id, transactionQuery)
+    const result = await fetchTransactions(supabase, user.id, memoizedQuery)
 
     if (result.error) {
       setTxError(result.error)
@@ -59,7 +68,7 @@ export function useFinanceData(options: UseFinanceDataOptions = {}) {
     }
 
     setTxLoading(false)
-  }, [supabase, transactionQuery, transactionQueryKey, user])
+  }, [supabase, memoizedQuery, user])
 
   const refreshTransactionTotals = useCallback(async () => {
     if (!user || !includeTransactionTotals) return

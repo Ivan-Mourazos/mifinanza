@@ -121,3 +121,25 @@ CREATE INDEX IF NOT EXISTS idx_saving_pots_user ON saving_pots(user_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_user ON saving_pot_movements(user_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_pot ON saving_pot_movements(pot_id);
 CREATE INDEX IF NOT EXISTS idx_saving_pot_movements_user_pot_created ON saving_pot_movements(user_id, pot_id, created_at DESC);
+
+-- ============================================
+-- RPC FUNCTIONS
+-- ============================================
+
+-- Function to calculate totals in the database
+CREATE OR REPLACE FUNCTION get_user_transaction_totals(user_id_param UUID)
+RETURNS TABLE (
+  income DECIMAL(12, 2),
+  expense DECIMAL(12, 2),
+  balance DECIMAL(12, 2)
+) SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0) AS income,
+    COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0) AS expense,
+    COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0) - COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0) AS balance
+  FROM transactions
+  WHERE user_id = user_id_param;
+END;
+$$ LANGUAGE plpgsql;

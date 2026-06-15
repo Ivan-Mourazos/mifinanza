@@ -177,34 +177,59 @@ export async function fetchTransactionTotals(
   supabase: SupabaseClient,
   userId: string
 ): Promise<{ data: TransactionTotals; error: string | null }> {
-  const response = await supabase
-    .from('transactions')
-    .select('amount,type')
-    .eq('user_id', userId)
-
   const emptyTotals = { income: 0, expense: 0, balance: 0 }
 
-  if (response.error) {
-    return { data: emptyTotals, error: 'No se pudo calcular el saldo total.' }
+  // 1. Intentar usar la función RPC optimizada
+  const rpcResponse = await supabase
+    .rpc('get_user_transaction_totals', { user_id_param: userId })
+    .maybeSingle()
+
+  if (!rpcResponse.error && rpcResponse.data) {
+    const data = rpcResponse.data as any
+    return {
+      data: {
+        income: Number(data.income || 0),
+        expense: Number(data.expense || 0),
+        balance: Number(data.balance || 0),
+      },
+      error: null,
+    }
   }
 
-  const totals = (response.data || []).reduce(
-    (currentTotals, transaction) => {
-      const amount = Number(transaction.amount)
+  // 2. Si el RPC falla porque no existe, hacemos fallback al método anterior de sumas en cliente
+  const isMissingFunction = rpcResponse.error && 
+    (rpcResponse.error.code === 'PGRST202' || rpcResponse.status === 404 || rpcResponse.error.message?.includes('does not exist'))
 
-      if (transaction.type === 'income') {
-        currentTotals.income += amount
-      } else {
-        currentTotals.expense += amount
-      }
+  if (isMissingFunction) {
+    const response = await supabase
+      .from('transactions')
+      .select('amount,type')
+      .eq('user_id', userId)
 
-      currentTotals.balance = currentTotals.income - currentTotals.expense
-      return currentTotals
-    },
-    { ...emptyTotals }
-  )
+    if (response.error) {
+      return { data: emptyTotals, error: 'No se pudo calcular el saldo total.' }
+    }
 
-  return { data: totals, error: null }
+    const totals = (response.data || []).reduce(
+      (currentTotals, transaction) => {
+        const amount = Number(transaction.amount)
+
+        if (transaction.type === 'income') {
+          currentTotals.income += amount
+        } else {
+          currentTotals.expense += amount
+        }
+
+        currentTotals.balance = currentTotals.income - currentTotals.expense
+        return currentTotals
+      },
+      { ...emptyTotals }
+    )
+
+    return { data: totals, error: null }
+  }
+
+  return { data: emptyTotals, error: 'No se pudo calcular el saldo total.' }
 }
 
 export async function fetchSettings(

@@ -37,6 +37,7 @@ export default function TransactionsPage() {
     user,
     categories,
     transactions,
+    transactionTotals,
     settings,
     potsWithBalances,
     potMovements,
@@ -46,7 +47,16 @@ export default function TransactionsPage() {
     error,
     refresh,
     supabase,
-  } = useFinanceData({ transactions: monthRange })
+  } = useFinanceData({
+    transactions: monthRange,
+    includeTransactionTotals: true,
+  })
+
+  const availableBalance = useMemo(() => {
+    const initialBalance = settings?.initial_balance || 0
+    const accountBalance = initialBalance + transactionTotals.balance
+    return accountBalance - totalPotsBalance
+  }, [settings?.initial_balance, transactionTotals.balance, totalPotsBalance])
 
 
   const [showForm, setShowForm] = useState(false)
@@ -336,16 +346,25 @@ export default function TransactionsPage() {
       <section className="glass rounded-2xl p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Resumen</p>
-            <h2 className="text-lg font-semibold capitalize text-white">{monthLabel}</h2>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Saldo en directo</p>
+            <h2
+              className={`text-2xl font-bold mt-1 ${
+                availableBalance >= 0 ? 'text-neonGreen' : 'text-neonMagenta'
+              }`}
+            >
+              {formatCurrency(availableBalance, currency)}
+            </h2>
           </div>
-          <p
-            className={`text-right text-2xl font-bold ${
-              totals.balance >= 0 ? 'text-neonGreen' : 'text-neonMagenta'
-            }`}
-          >
-            {formatCurrency(totals.balance, currency)}
-          </p>
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Balance del mes ({monthLabel})</p>
+            <p
+              className={`text-lg font-semibold mt-1.5 ${
+                totals.balance >= 0 ? 'text-neonGreen' : 'text-neonMagenta'
+              }`}
+            >
+              {formatCurrency(totals.balance, currency)}
+            </p>
+          </div>
         </div>
         <div className="mb-4 flex flex-col sm:flex-row gap-3 items-center justify-between">
           <div className="flex gap-2 w-full sm:w-auto">
